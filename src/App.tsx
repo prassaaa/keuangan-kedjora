@@ -1,17 +1,65 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Wallet, TrendingUp, TrendingDown, Plus, History,
-  LayoutDashboard, ArrowUpRight, ArrowDownRight, Calendar, X, Trash2, Loader2
+  LayoutDashboard, ArrowUpRight, ArrowDownRight, Calendar, X, Trash2, Loader2, Eye, EyeOff
 } from 'lucide-react';
 import type { TransactionType } from './types';
 import { CATEGORIES } from './types';
 import { Card, IconButton, CategoryIcon } from './components';
 import { useTransactions } from './hooks/useTransactions';
+import logoSvg from './assets/logo.svg';
+
+const APP_PASSWORD = import.meta.env.VITE_APP_PASSWORD || 'kedjora123';
+const AUTH_KEY = 'kedjora_auth_expiry';
+const AUTH_DURATION = 10 * 60 * 1000; // 10 menit dalam milidetik
 
 export default function App() {
   const [view, setView] = useState<'dashboard' | 'history'>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Auth State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  // Check if already authenticated and not expired
+  useEffect(() => {
+    const checkAuth = () => {
+      const expiry = localStorage.getItem(AUTH_KEY);
+      if (expiry) {
+        const expiryTime = parseInt(expiry, 10);
+        if (Date.now() < expiryTime) {
+          setIsAuthenticated(true);
+        } else {
+          // Expired, remove key
+          localStorage.removeItem(AUTH_KEY);
+          setIsAuthenticated(false);
+        }
+      }
+    };
+
+    checkAuth();
+
+    // Check every 30 seconds if session expired
+    const interval = setInterval(checkAuth, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === APP_PASSWORD) {
+      setIsAuthenticated(true);
+      // Set expiry time 10 minutes from now
+      const expiryTime = Date.now() + AUTH_DURATION;
+      localStorage.setItem(AUTH_KEY, expiryTime.toString());
+      setAuthError('');
+      setPassword('');
+    } else {
+      setAuthError('Password salah!');
+    }
+  };
 
   // Use Supabase hook
   const { transactions, loading, error, addTransaction, deleteTransaction } = useTransactions();
@@ -150,35 +198,79 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 pb-20 md:pb-0">
-      {/* Error Banner */}
-      {error && (
-        <div className="bg-rose-500/20 border-b border-rose-500/50 px-6 py-3 text-center text-rose-300 text-sm">
-          {error}
+      {/* Password Modal */}
+      {!isAuthenticated && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900">
+          <div className="bg-slate-800 border border-slate-700 w-full max-w-sm rounded-3xl p-8 shadow-2xl">
+            <div className="text-center mb-6">
+              <img src={logoSvg} alt="Logo" className="w-20 h-20 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-white">Kedjora Finance</h2>
+              <p className="text-slate-400 text-sm mt-2">Masukkan password untuk melanjutkan</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full bg-slate-700/50 border border-slate-600 rounded-xl py-3 px-4 pr-12 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-500"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                >
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+
+              {authError && (
+                <p className="text-rose-400 text-sm text-center">{authError}</p>
+              )}
+
+              <button
+                type="submit"
+                className="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-3 rounded-xl transition-colors"
+              >
+                Masuk
+              </button>
+            </form>
+          </div>
         </div>
       )}
 
-      {/* Navbar */}
-      <nav className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Wallet className="text-white" size={18} />
-            </div>
-            <span className="font-bold text-xl tracking-tight text-white">Kedjora Finance</span>
+      {/* Main Content - Blur when not authenticated */}
+      <div className={!isAuthenticated ? 'blur-lg pointer-events-none select-none' : ''}>
+        {/* Error Banner */}
+        {error && (
+          <div className="bg-rose-500/20 border-b border-rose-500/50 px-6 py-3 text-center text-rose-300 text-sm">
+            {error}
           </div>
+        )}
 
-          <div className="flex gap-2 bg-slate-800/50 p-1 rounded-2xl border border-slate-700/50">
-            <IconButton
-              icon={LayoutDashboard}
-              active={view === 'dashboard'}
-              onClick={() => setView('dashboard')}
-              label="Dashboard"
-            />
-            <IconButton
-              icon={History}
-              active={view === 'history'}
-              onClick={() => setView('history')}
-              label="Riwayat"
+        {/* Navbar */}
+        <nav className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-30">
+          <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <img src={logoSvg} alt="Logo" className="w-8 h-8" />
+              <span className="font-bold text-xl tracking-tight text-white">Kedjora Finance</span>
+            </div>
+
+            <div className="flex gap-2 bg-slate-800/50 p-1 rounded-2xl border border-slate-700/50">
+              <IconButton
+                icon={LayoutDashboard}
+                active={view === 'dashboard'}
+                onClick={() => setView('dashboard')}
+                label="Dashboard"
+              />
+              <IconButton
+                icon={History}
+                active={view === 'history'}
+                onClick={() => setView('history')}
+                label="Riwayat"
             />
           </div>
         </div>
@@ -526,6 +618,7 @@ export default function App() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
