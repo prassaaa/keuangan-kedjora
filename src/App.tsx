@@ -20,7 +20,7 @@ export default function App() {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<TransactionType>('expense');
-  const [category, setCategory] = useState(CATEGORIES.expense[0]);
+  const [category, setCategory] = useState<string>(CATEGORIES.expense[0]);
 
   // Derived Statistics
   const summary = useMemo(() => {
