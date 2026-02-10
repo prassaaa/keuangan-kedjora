@@ -1,20 +1,22 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
   Wallet, TrendingUp, TrendingDown, Plus, History,
-  LayoutDashboard, ArrowUpRight, ArrowDownRight, Calendar, X, Trash2, Loader2, Eye, EyeOff
+  LayoutDashboard, ArrowUpRight, ArrowDownRight, Calendar, X, Trash2, Loader2, Eye, EyeOff, FileText
 } from 'lucide-react';
 import type { TransactionType } from './types';
 import { CATEGORIES } from './types';
-import { Card, IconButton, CategoryIcon } from './components';
+import { Card, IconButton, CategoryIcon, InvoiceList } from './components';
 import { useTransactions } from './hooks/useTransactions';
+import { useInvoices } from './hooks/useInvoices';
 import logoSvg from './assets/logo.svg';
 
 const APP_PASSWORD = import.meta.env.VITE_APP_PASSWORD || 'kedjora123';
 const AUTH_KEY = 'kedjora_auth_expiry';
 const AUTH_DURATION = 10 * 60 * 1000; // 10 menit dalam milidetik
+const MONTH_NAMES = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
 export default function App() {
-  const [view, setView] = useState<'dashboard' | 'history'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'history' | 'invoice'>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -63,6 +65,12 @@ export default function App() {
 
   // Use Supabase hook
   const { transactions, loading, error, addTransaction, deleteTransaction } = useTransactions();
+  const { invoices, loading: invoicesLoading } = useInvoices();
+
+  // Filter State
+  const [filterMode, setFilterMode] = useState<'all' | 'month' | 'year'>('month');
+  const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
 
   // Form State
   const [amount, setAmount] = useState('');
@@ -70,41 +78,99 @@ export default function App() {
   const [type, setType] = useState<TransactionType>('expense');
   const [category, setCategory] = useState<string>(CATEGORIES.expense[0]);
 
+  // Filtered transactions based on filter mode
+  const filteredTransactions = useMemo(() => {
+    if (filterMode === 'all') return transactions;
+    return transactions.filter(t => {
+      const d = new Date(t.date);
+      if (filterMode === 'year') return d.getFullYear() === filterYear;
+      return d.getFullYear() === filterYear && d.getMonth() === filterMonth;
+    });
+  }, [transactions, filterMode, filterMonth, filterYear]);
+
+  // Available years from transactions + invoices
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    transactions.forEach(t => years.add(new Date(t.date).getFullYear()));
+    invoices.forEach(inv => years.add(new Date(inv.date).getFullYear()));
+    if (years.size === 0) years.add(new Date().getFullYear());
+    return Array.from(years).sort((a, b) => b - a);
+  }, [transactions, invoices]);
+
+  // Invoice summary for selected period
+  const invoiceSummary = useMemo(() => {
+    const filtered = filterMode === 'all' ? invoices : invoices.filter(inv => {
+      const d = new Date(inv.date);
+      if (filterMode === 'year') return d.getFullYear() === filterYear;
+      return d.getFullYear() === filterYear && d.getMonth() === filterMonth;
+    });
+    return {
+      count: filtered.length,
+      total: filtered.reduce((acc, inv) => acc + inv.amount, 0)
+    };
+  }, [invoices, filterMode, filterMonth, filterYear]);
+
+  // Period label
+  const periodLabel = useMemo(() => {
+    if (filterMode === 'all') return 'Semua Waktu';
+    if (filterMode === 'year') return `Tahun ${filterYear}`;
+    return `${MONTH_NAMES[filterMonth]} ${filterYear}`;
+  }, [filterMode, filterMonth, filterYear]);
+
   // Derived Statistics
   const summary = useMemo(() => {
-    const totalIncome = transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-    const totalExpense = transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
+    const totalIncome = filteredTransactions.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+    const totalExpense = filteredTransactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
     return {
       totalIncome,
       totalExpense,
       balance: totalIncome - totalExpense
     };
-  }, [transactions]);
+  }, [filteredTransactions]);
 
-  // Data untuk bar chart (7 hari terakhir)
+  // Data untuk bar chart (adaptif berdasarkan filter mode)
   const barChartData = useMemo(() => {
-    const days: { name: string; income: number; expense: number }[] = [];
-    const today = new Date();
+    const bars: { name: string; income: number; expense: number }[] = [];
 
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      const dayName = date.toLocaleDateString('id-ID', { weekday: 'short' });
-
-      const dayIncome = transactions
-        .filter(t => t.type === 'income' && t.date.startsWith(dateStr))
-        .reduce((acc, t) => acc + t.amount, 0);
-
-      const dayExpense = transactions
-        .filter(t => t.type === 'expense' && t.date.startsWith(dateStr))
-        .reduce((acc, t) => acc + t.amount, 0);
-
-      days.push({ name: dayName, income: dayIncome, expense: dayExpense });
+    if (filterMode === 'all') {
+      // 7 hari terakhir
+      const today = new Date();
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        const dayName = date.toLocaleDateString('id-ID', { weekday: 'short' });
+        const dayIncome = transactions.filter(t => t.type === 'income' && t.date.startsWith(dateStr)).reduce((acc, t) => acc + t.amount, 0);
+        const dayExpense = transactions.filter(t => t.type === 'expense' && t.date.startsWith(dateStr)).reduce((acc, t) => acc + t.amount, 0);
+        bars.push({ name: dayName, income: dayIncome, expense: dayExpense });
+      }
+    } else if (filterMode === 'year') {
+      // 12 bar bulanan
+      const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+      for (let m = 0; m < 12; m++) {
+        const monthIncome = transactions.filter(t => {
+          const d = new Date(t.date);
+          return t.type === 'income' && d.getFullYear() === filterYear && d.getMonth() === m;
+        }).reduce((acc, t) => acc + t.amount, 0);
+        const monthExpense = transactions.filter(t => {
+          const d = new Date(t.date);
+          return t.type === 'expense' && d.getFullYear() === filterYear && d.getMonth() === m;
+        }).reduce((acc, t) => acc + t.amount, 0);
+        bars.push({ name: shortMonths[m], income: monthIncome, expense: monthExpense });
+      }
+    } else {
+      // Bar harian untuk bulan terpilih
+      const daysInMonth = new Date(filterYear, filterMonth + 1, 0).getDate();
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${filterYear}-${String(filterMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const dayIncome = transactions.filter(t => t.type === 'income' && t.date.startsWith(dateStr)).reduce((acc, t) => acc + t.amount, 0);
+        const dayExpense = transactions.filter(t => t.type === 'expense' && t.date.startsWith(dateStr)).reduce((acc, t) => acc + t.amount, 0);
+        bars.push({ name: String(d), income: dayIncome, expense: dayExpense });
+      }
     }
 
-    return days;
-  }, [transactions]);
+    return bars;
+  }, [transactions, filterMode, filterMonth, filterYear]);
 
   // Max value untuk scaling bar chart
   const maxBarValue = useMemo(() => {
@@ -115,14 +181,14 @@ export default function App() {
   // Data pengeluaran per kategori
   const categoryData = useMemo(() => {
     const data: Record<string, number> = {};
-    transactions.filter(t => t.type === 'expense').forEach(t => {
+    filteredTransactions.filter(t => t.type === 'expense').forEach(t => {
       data[t.category] = (data[t.category] || 0) + t.amount;
     });
     const total = Object.values(data).reduce((a, b) => a + b, 0);
     return Object.entries(data)
       .map(([name, value]) => ({ name, value, percentage: total > 0 ? (value / total) * 100 : 0 }))
       .sort((a, b) => b.value - a.value);
-  }, [transactions]);
+  }, [filteredTransactions]);
 
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -185,7 +251,7 @@ export default function App() {
   const COLORS = ['#6366f1', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#f43f5e', '#14b8a6', '#f97316'];
 
   // Loading state
-  if (loading) {
+  if (loading || invoicesLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-center">
@@ -200,7 +266,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-900 text-slate-100 pb-20 md:pb-0">
       {/* Password Modal */}
       {!isAuthenticated && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900">
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 bg-slate-900">
           <div className="bg-slate-800 border border-slate-700 w-full max-w-sm rounded-3xl p-8 shadow-2xl">
             <div className="text-center mb-6">
               <img src={logoSvg} alt="Logo" className="w-20 h-20 mx-auto mb-4" />
@@ -271,6 +337,12 @@ export default function App() {
                 active={view === 'history'}
                 onClick={() => setView('history')}
                 label="Riwayat"
+              />
+              <IconButton
+                icon={FileText}
+                active={view === 'invoice'}
+                onClick={() => setView('invoice')}
+                label="Invoice"
             />
           </div>
         </div>
@@ -281,16 +353,67 @@ export default function App() {
         {/* Dashboard View */}
         {view === 'dashboard' && (
           <div className="space-y-6">
+            {/* Filter Controls */}
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700/50">
+                  {([['all', 'Semua'], ['month', 'Bulanan'], ['year', 'Tahunan']] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      onClick={() => setFilterMode(mode)}
+                      className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-all ${
+                        filterMode === mode
+                          ? 'bg-indigo-500 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {filterMode !== 'all' && (
+                  <select
+                    value={filterYear}
+                    onChange={(e) => setFilterYear(Number(e.target.value))}
+                    className="bg-slate-800 border border-slate-700/50 rounded-xl px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                  >
+                    {availableYears.map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {filterMode === 'month' && (
+                <div className="flex flex-wrap gap-1.5">
+                  {MONTH_NAMES.map((name, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setFilterMonth(i)}
+                      className={`px-3 py-1 text-xs font-medium rounded-lg transition-all ${
+                        filterMonth === i
+                          ? 'bg-indigo-500 text-white'
+                          : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/50'
+                      }`}
+                    >
+                      {name.slice(0, 3)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Header Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card className="relative overflow-hidden group">
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                   <Wallet size={100} />
                 </div>
-                <p className="text-slate-400 text-sm font-medium uppercase tracking-wider">Total Saldo</p>
+                <p className="text-slate-400 text-sm font-medium uppercase tracking-wider">Saldo</p>
                 <h3 className="text-3xl font-bold mt-2 text-white">{formatCurrency(summary.balance)}</h3>
                 <div className="mt-4 flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full bg-slate-700/30 w-fit text-slate-300">
-                  <span>Tersedia Sekarang</span>
+                  <span>{periodLabel}</span>
                 </div>
               </Card>
 
@@ -298,7 +421,7 @@ export default function App() {
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity text-emerald-500">
                   <TrendingUp size={100} />
                 </div>
-                <p className="text-emerald-400 text-sm font-medium uppercase tracking-wider">Total Pemasukan</p>
+                <p className="text-emerald-400 text-sm font-medium uppercase tracking-wider">Pemasukan</p>
                 <h3 className="text-3xl font-bold mt-2 text-white">{formatCurrency(summary.totalIncome)}</h3>
                 <div className="mt-4 flex items-center gap-1 text-emerald-400 text-sm">
                   <ArrowUpRight size={16} />
@@ -310,23 +433,35 @@ export default function App() {
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity text-rose-500">
                   <TrendingDown size={100} />
                 </div>
-                <p className="text-rose-400 text-sm font-medium uppercase tracking-wider">Total Pengeluaran</p>
+                <p className="text-rose-400 text-sm font-medium uppercase tracking-wider">Pengeluaran</p>
                 <h3 className="text-3xl font-bold mt-2 text-white">{formatCurrency(summary.totalExpense)}</h3>
                 <div className="mt-4 flex items-center gap-1 text-rose-400 text-sm">
                   <ArrowDownRight size={16} />
                   <span>Keluar</span>
                 </div>
               </Card>
+
+              <Card className="relative overflow-hidden group border-l-4 border-l-indigo-500">
+                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity text-indigo-500">
+                  <FileText size={100} />
+                </div>
+                <p className="text-indigo-400 text-sm font-medium uppercase tracking-wider">Invoice</p>
+                <h3 className="text-3xl font-bold mt-2 text-white">{formatCurrency(invoiceSummary.total)}</h3>
+                <div className="mt-4 flex items-center gap-1 text-indigo-400 text-sm">
+                  <FileText size={16} />
+                  <span>{invoiceSummary.count} invoice</span>
+                </div>
+              </Card>
             </div>
 
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Bar Chart - 7 Hari Terakhir */}
+              {/* Bar Chart */}
               <Card className="lg:col-span-2">
                 <div className="flex justify-between items-center mb-6">
                   <h4 className="text-lg font-semibold flex items-center gap-2">
                     <TrendingUp size={18} className="text-indigo-400" />
-                    7 Hari Terakhir
+                    {filterMode === 'all' ? '7 Hari Terakhir' : filterMode === 'year' ? `Bulanan ${filterYear}` : periodLabel}
                   </h4>
                   <div className="flex gap-4 text-xs">
                     <div className="flex items-center gap-1">
@@ -341,12 +476,12 @@ export default function App() {
                 </div>
 
                 {/* Bar Chart */}
-                <div className="flex items-end justify-between gap-2 h-[250px] pt-8">
+                <div className="flex items-end justify-between gap-2 h-[250px] pt-8 overflow-x-auto">
                   {barChartData.map((day, index) => (
-                    <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                      <div className="flex-1 w-full flex items-end justify-center gap-1">
+                    <div key={index} className="flex-1 flex flex-col items-center gap-2 min-w-0">
+                      <div className="flex-1 w-full flex items-end justify-center gap-0.5">
                         {/* Income Bar */}
-                        <div className="relative group/bar w-5">
+                        <div className={`relative group/bar ${barChartData.length > 15 ? 'w-2' : 'w-5'}`}>
                           <div
                             className="w-full bg-emerald-500/80 rounded-t-md transition-all hover:bg-emerald-400"
                             style={{ height: `${(day.income / maxBarValue) * 200}px`, minHeight: day.income > 0 ? '4px' : '0' }}
@@ -358,7 +493,7 @@ export default function App() {
                           )}
                         </div>
                         {/* Expense Bar */}
-                        <div className="relative group/bar w-5">
+                        <div className={`relative group/bar ${barChartData.length > 15 ? 'w-2' : 'w-5'}`}>
                           <div
                             className="w-full bg-rose-500/80 rounded-t-md transition-all hover:bg-rose-400"
                             style={{ height: `${(day.expense / maxBarValue) * 200}px`, minHeight: day.expense > 0 ? '4px' : '0' }}
@@ -370,7 +505,7 @@ export default function App() {
                           )}
                         </div>
                       </div>
-                      <span className="text-xs text-slate-500">{day.name}</span>
+                      <span className={`text-slate-500 ${barChartData.length > 15 ? 'text-[10px]' : 'text-xs'}`}>{day.name}</span>
                     </div>
                   ))}
                 </div>
@@ -409,7 +544,7 @@ export default function App() {
                     {/* Total */}
                     <div className="pt-4 border-t border-slate-700/50">
                       <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-400">Total Pengeluaran</span>
+                        <span className="text-sm text-slate-400">Total Pengeluaran ({periodLabel})</span>
                         <span className="font-bold text-white">{formatCurrency(summary.totalExpense)}</span>
                       </div>
                     </div>
@@ -505,6 +640,11 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Invoice View */}
+        {view === 'invoice' && (
+          <InvoiceList transactions={transactions} formatCurrency={formatCurrency} />
         )}
 
       </main>
