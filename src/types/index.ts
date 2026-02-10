@@ -17,6 +17,15 @@ export interface FinancialSummary {
   balance: number;
 }
 
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  description: string;
+  amount: number;
+  date: string;
+  created_at?: string;
+}
+
 export const CATEGORIES = {
   income: [
     'Project',
